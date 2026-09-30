@@ -25,6 +25,50 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float maxFOV = 120.0f;
     [SerializeField] private float fovChangeSpeed = 40.0f;
 
+    [Header("Inventario")]
+    [Tooltip("Array para almacenar cada moneda en una posición única.")]
+    [SerializeField] private int[] coinInventory = new int[5]; // Array de 5 posiciones
+    private int currentCoinIndex = 0; // Índice de la siguiente posición libre
+
+    public int[] CoinInventory => coinInventory;
+
+    // Método para agregar la moneda al array
+    public void AddCoin(int coinValue)
+    {
+        if (currentCoinIndex < coinInventory.Length)
+        {
+            // Se guarda en una posición única del array
+            coinInventory[currentCoinIndex] = coinValue;
+            currentCoinIndex++;
+            Debug.Log($"Moneda guardada en la posición [{currentCoinIndex - 1}] del array.");
+        }
+        else
+        {
+            Debug.Log("El inventario de monedas está lleno.");
+        }
+    }
+
+    // Método para mostrar el inventario en consola al presionar 'I'
+    private void HandleInventoryInput()
+    {
+        if (Keyboard.current != null && Keyboard.current.iKey.wasPressedThisFrame)
+        {
+            int totalCoins = GetTotalCoins();
+            Debug.Log($"MONEDAS TOTALES EN INVENTARIO: {totalCoins}");
+        }
+    }
+
+    // Calcula el total sumando los valores almacenados en el array
+    private int GetTotalCoins()
+    {
+        int total = 0;
+        for (int i = 0; i < coinInventory.Length; i++)
+        {
+            total += coinInventory[i];
+        }
+        return total;
+    }
+
     [Header("Atributos del Jugador")]
     [SerializeField] private float maxHealth = 100.0f;
     [SerializeField] private float currentHealth;
@@ -92,6 +136,7 @@ public class PlayerController : MonoBehaviour
         ReadInputs();
         HandleLook();
         HandleFOV();
+        HandleInventoryInput();
         
     }
 
@@ -281,4 +326,5 @@ public class PlayerController : MonoBehaviour
         ammoCount += amount;
         Debug.Log($"Munición recogida. Balas actuales: {ammoCount}");
     }
+  
 }
