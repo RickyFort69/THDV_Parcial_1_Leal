@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.SceneManagement; // Necesario para reiniciar la escena con F2
 
 [RequireComponent(typeof(Rigidbody))]
 public class PlayerController : MonoBehaviour
@@ -9,15 +10,12 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float moveSpeed = 6.0f;
 
     [Header("Salto y Físicas de Suelo")]
-    [Tooltip("Fuerza del salto regulable desde el Inspector.")]
     [SerializeField] private float jumpForce = 5.0f;
-    [Tooltip("Capa que el personaje considera como suelo para poder saltar.")]
     [SerializeField] private LayerMask groundMask;
-    [Tooltip("Transform ubicado en los pies del personaje para detectar el suelo.")]
     [SerializeField] private Transform groundCheck;
     [SerializeField] private float groundDistance = 0.3f;
 
-    [Header("Cámara y FOV")]
+    [Header("Cámara y Perspectiva (1ª y 3ª Persona)")]
     [SerializeField] private Camera playerCamera;
     [Range(0.01f, 1.0f)]
     [SerializeField] private float mouseSensitivity = 0.1f;
@@ -25,69 +23,30 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float maxFOV = 120.0f;
     [SerializeField] private float fovChangeSpeed = 40.0f;
 
-    [Header("Inventario")]
-    [Tooltip("Array para almacenar cada moneda en una posición única.")]
-    [SerializeField] private int[] coinInventory = new int[5]; // Array de 5 posiciones
-    private int currentCoinIndex = 0; // Índice de la siguiente posición libre
-
-    public int[] CoinInventory => coinInventory;
-
-    // Método para agregar la moneda al array
-    public void AddCoin(int coinValue)
-    {
-        if (currentCoinIndex < coinInventory.Length)
-        {
-            // Se guarda en una posición única del array
-            coinInventory[currentCoinIndex] = coinValue;
-            currentCoinIndex++;
-            Debug.Log($"Moneda guardada en la posición [{currentCoinIndex - 1}] del array.");
-        }
-        else
-        {
-            Debug.Log("El inventario de monedas está lleno.");
-        }
-    }
-
-    // Método para mostrar el inventario en consola al presionar 'I'
-    private void HandleInventoryInput()
-    {
-        if (Keyboard.current != null && Keyboard.current.iKey.wasPressedThisFrame)
-        {
-            int totalCoins = GetTotalCoins();
-            Debug.Log($"MONEDAS TOTALES EN INVENTARIO: {totalCoins}");
-        }
-    }
-
-    // Calcula el total sumando los valores almacenados en el array
-    private int GetTotalCoins()
-    {
-        int total = 0;
-        for (int i = 0; i < coinInventory.Length; i++)
-        {
-            total += coinInventory[i];
-        }
-        return total;
-    }
+    [Tooltip("Posición local de la cámara en 1ª Persona.")]
+    [SerializeField] private Vector3 firstPersonOffset = new Vector3(0f, 0.8f, 0f);
+    [Tooltip("Posición local de la cámara en 3ª Persona (Vista de Hombro o Centrada).")]
+    [SerializeField] private Vector3 thirdPersonOffset = new Vector3(0.5f, 1.2f, -2.5f);
 
     [Header("Atributos del Jugador")]
     [SerializeField] private float maxHealth = 100.0f;
     [SerializeField] private float currentHealth;
     [SerializeField] private float maxStamina = 10.0f;
     [SerializeField] private float currentStamina;
-    [SerializeField] private float staminaRegenRate = 2.0f; // 2 puntos por segundo
-    [SerializeField] private float jumpStaminaCost = 5.0f;  // Cada salto gasta 5
+    [SerializeField] private float staminaRegenRate = 2.0f;
+    [SerializeField] private float jumpStaminaCost = 5.0f;
 
     [Header("Ataque / Arma (Pistola)")]
-    [Tooltip("Distancia máxima del disparo.")]
     [SerializeField] private float attackRange = 20.0f;
-    [Tooltip("Daño infligido por disparo.")]
     [SerializeField] private float attackDamage = 25.0f;
-    [Tooltip("Disparos por segundo.")]
     [SerializeField] private float fireRate = 1.5f;
-    [Tooltip("Cantidad total/reserva de balas.")]
-    [SerializeField] private int ammoCount = 10;
-    [Tooltip("Capas de objetos que pueden recibir disparos.")]
-    [SerializeField] private LayerMask attackMask = ~0; // Todo por defecto
+    [SerializeField] private int initialAmmo = 10;
+    [SerializeField] private int ammoCount;
+    [SerializeField] private LayerMask attackMask = ~0;
+
+    [Header("Inventario")]
+    [SerializeField] private int[] coinInventory = new int[5];
+    private int currentCoinIndex = 0;
 
     // Componentes y estado interno
     private Rigidbody rb;
@@ -98,37 +57,41 @@ public class PlayerController : MonoBehaviour
     private bool jumpRequested = false;
     private bool isDead = false;
     private float nextTimeToFire = 0.0f;
+    private bool isThirdPerson = false;
+    private Vector3 initialPosition;
 
     public bool IsDead => isDead;
     public float CurrentHealth => currentHealth;
     public float CurrentStamina => currentStamina;
     public bool IsGrounded => isGrounded;
     public int AmmoCount => ammoCount;
+    public int[] CoinInventory => coinInventory;
 
     private void Awake()
     {
         rb = GetComponent<Rigidbody>();
-        currentHealth = maxHealth;
-        currentStamina = maxStamina;
+        initialPosition = transform.position; // Guardar posición inicial para el Respawn
 
-        // Auto-asignar cámara si falta
         if (playerCamera == null)
         {
             playerCamera = GetComponentInChildren<Camera>();
         }
 
-        // Configuración física
         rb.freezeRotation = true;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
         rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
-        // Ocultar y capturar el ratón
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
+
+        ResetPlayerValues();
     }
 
     private void Update()
     {
+        // Controles de Reinicio y Reaparición globales
+        HandleSystemInputs();
+
         if (isDead) return;
 
         CheckGrounded();
@@ -136,8 +99,8 @@ public class PlayerController : MonoBehaviour
         ReadInputs();
         HandleLook();
         HandleFOV();
+        HandleCameraToggle();
         HandleInventoryInput();
-        
     }
 
     private void FixedUpdate()
@@ -151,6 +114,58 @@ public class PlayerController : MonoBehaviour
             PerformJump();
             jumpRequested = false;
         }
+    }
+
+    private void HandleSystemInputs()
+    {
+        if (Keyboard.current == null) return;
+
+        // F1: Reaparecer al estar muerto con valores iniciales
+        if (Keyboard.current.f1Key.wasPressedThisFrame && isDead)
+        {
+            Respawn();
+        }
+
+        // F2: Reiniciar la escena completa
+        if (Keyboard.current.f2Key.wasPressedThisFrame)
+        {
+            SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+        }
+    }
+
+    private void Respawn()
+    {
+        isDead = false;
+        transform.position = initialPosition;
+        rb.linearVelocity = Vector3.zero;
+        ResetPlayerValues();
+        Debug.Log("Jugador reaparecido en la posición inicial.");
+    }
+
+    private void ResetPlayerValues()
+    {
+        currentHealth = maxHealth;
+        currentStamina = maxStamina;
+        ammoCount = initialAmmo;
+        currentCoinIndex = 0;
+        coinInventory = new int[5];
+    }
+
+    private void HandleCameraToggle()
+    {
+        if (Keyboard.current != null && Keyboard.current.tabKey.wasPressedThisFrame)
+        {
+            isThirdPerson = !isThirdPerson;
+            UpdateCameraOffset();
+        }
+    }
+
+    private void UpdateCameraOffset()
+    {
+        if (playerCamera == null) return;
+
+        // Alterna la posición local de la cámara manteniendo su jerarquía
+        playerCamera.transform.localPosition = isThirdPerson ? thirdPersonOffset : firstPersonOffset;
     }
 
     private void CheckGrounded()
@@ -186,7 +201,6 @@ public class PlayerController : MonoBehaviour
 
             moveInput = rawMove.normalized;
 
-            // Salto
             if (Keyboard.current.spaceKey.wasPressedThisFrame)
             {
                 if (isGrounded && currentStamina >= jumpStaminaCost)
@@ -200,7 +214,6 @@ public class PlayerController : MonoBehaviour
         {
             lookInput = Mouse.current.delta.ReadValue() * mouseSensitivity;
 
-            // Ataque semiautomático (Click izquierdo del ratón - una pulsación por disparo)
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
                 TryShoot();
@@ -210,7 +223,6 @@ public class PlayerController : MonoBehaviour
 
     private void TryShoot()
     {
-        // Verificar cadencia de tiro y munición disponible
         if (Time.time < nextTimeToFire) return;
         if (ammoCount <= 0)
         {
@@ -218,21 +230,17 @@ public class PlayerController : MonoBehaviour
             return;
         }
 
-        // Calcular siguiente tiempo habilitado para disparar según la cadencia
         nextTimeToFire = Time.time + (1.0f / fireRate);
-
-        // Descontar una bala
         ammoCount--;
-        Debug.Log($"Pum! Balas restantes: {ammoCount}");
 
-        // Raycast lanzado exactamente desde el centro del Viewport de la Cámara (0.5, 0.5)
+        // El Raycast lanzado desde ViewportPointToRay(0.5, 0.5) garantiza
+        // que el disparo apunte exactamente al centro de la pantalla tanto en 1ª como en 3ª persona.
         Ray ray = playerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
 
         if (Physics.Raycast(ray, out RaycastHit hit, attackRange, attackMask))
         {
             Debug.Log($"Impacto en: {hit.collider.name}");
 
-            // Intentar aplicar daño si el objeto implementa IDamageable
             if (hit.collider.TryGetComponent<IDamageable>(out var damageable))
             {
                 damageable.TakeDamage(attackDamage);
@@ -293,6 +301,41 @@ public class PlayerController : MonoBehaviour
         playerCamera.fieldOfView = Mathf.Clamp(currentFOV, minFOV, maxFOV);
     }
 
+    private void HandleInventoryInput()
+    {
+        if (Keyboard.current != null && Keyboard.current.iKey.wasPressedThisFrame)
+        {
+            int totalCoins = GetTotalCoins();
+            Debug.Log($"MONEDAS TOTALES EN INVENTARIO: {totalCoins}");
+        }
+    }
+
+    public void AddAmmo(int amount)
+    {
+        ammoCount += amount;
+        Debug.Log($"Munición recogida. Balas actuales: {ammoCount}");
+    }
+
+    public void AddCoin(int coinValue)
+    {
+        if (currentCoinIndex < coinInventory.Length)
+        {
+            coinInventory[currentCoinIndex] = coinValue;
+            currentCoinIndex++;
+            Debug.Log($"Moneda guardada en posición [{currentCoinIndex - 1}] del array.");
+        }
+    }
+
+    private int GetTotalCoins()
+    {
+        int total = 0;
+        for (int i = 0; i < coinInventory.Length; i++)
+        {
+            total += coinInventory[i];
+        }
+        return total;
+    }
+
     public void TakeDamage(float amount)
     {
         if (isDead) return;
@@ -310,7 +353,7 @@ public class PlayerController : MonoBehaviour
     {
         isDead = true;
         rb.linearVelocity = Vector3.zero;
-        Debug.Log("El jugador ha muerto. Acciones desactivadas.");
+        Debug.Log("El jugador ha muerto. Presioná F1 para reaparecer o F2 para reiniciar escena.");
     }
 
     private void OnDrawGizmosSelected()
@@ -321,10 +364,4 @@ public class PlayerController : MonoBehaviour
             Gizmos.DrawWireSphere(groundCheck.position, groundDistance);
         }
     }
-    public void AddAmmo(int amount)
-    {
-        ammoCount += amount;
-        Debug.Log($"Munición recogida. Balas actuales: {ammoCount}");
-    }
-  
 }
